@@ -1,0 +1,26 @@
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# Build and distribution artifacts
+dist/
+build/
+*.gem
+*.egg
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# Development environment and credentials
+.env
+.env.local
+.env.production
+.pnpm-debug.log
+
+# System files
+.DS_Store
+Thumbs.db
