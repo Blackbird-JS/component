@@ -40,7 +40,7 @@ export class BlackbirdComponent extends HTMLElement {
         const doc = parser.parseFromString(htmlText, 'text/html');
 
         // Append it cleanly inside the isolated Shadow DOM
-        this.shadowRoot.innerHTML = doc.body.innerHTML;
+        this.shadowRoot.innerHTML = doc.documentElement.innerHTML;
       } catch (err) {
         console.error(`[Blackbird] Failed to fetch external template at: ${path}`, err);
       }
