@@ -10,6 +10,9 @@ export class BlackbirdComponent extends HTMLElement {
   // Add an internal register array to capture cleanup tokens safely
   #unsubscribers = [];
 
+  // A strict private guard to track if mounting has already occurred
+  #isMounted = false;
+
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
@@ -27,13 +30,27 @@ export class BlackbirdComponent extends HTMLElement {
   }
 
   async connectedCallback() {
+    // MOUNT GUARD: If this instance has already run its template loading setup, block it instantly.
+    if (this.#isMounted) return;
+    this.#isMounted = true;
+
     // Check if the developer provided an external template file path string
     const path = this.constructor.templatePath;
 
     if (path) {
       try {
         const response = await fetch(path);
+
+        // If the path is broken (404, 500, etc.), do not parse it!
+        if (!response) {
+          throw new Error(`Server responded with status: ${response.status}`);
+        }
+
         const htmlText = await response.text();
+
+        if (htmlText.includes('<html') && htmlText.includes(this.tagName.toLowerCase())) {
+          throw new Error(`SPA Fallback detected. Dev server returned index.html instead of template asset.`);
+        }
 
         // Convert the fetched raw text string into browser-executable DOM elements
         const parser = new DOMParser();
@@ -42,7 +59,7 @@ export class BlackbirdComponent extends HTMLElement {
         // Append it cleanly inside the isolated Shadow DOM
         this.shadowRoot.innerHTML = doc.documentElement.innerHTML;
       } catch (err) {
-        console.error(`[Blackbird] Failed to fetch external template at: ${path}`, err);
+        console.error(`[Blackbird] Failed to fetch external template at: ${path}\n`, err);
       }
     }
 
