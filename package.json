@@ -1,6 +1,6 @@
 {
   "name": "@blackbirdjs/component",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Template-first fine-grained Web Component layer for BlackbirdJS",
   "type": "module",
   "main": "./src/index.js",
@@ -8,7 +8,7 @@
     ".": "./src/index.js"
   },
   "dependencies": {
-    "@blackbirdjs/store": "^0.1.0"
+    "@blackbirdjs/store": "^0.2.0"
   },
   "license": "Apache-2.0",
   "publishConfig": {
