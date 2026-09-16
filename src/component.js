@@ -26,25 +26,47 @@ export class BlackbirdComponent extends HTMLElement {
     this.localStore.set(cleanKey, newValue);
   }
 
-  connectedCallback() {
-    const templateId = this.getAttribute('template');
-    const template = document.getElementById(templateId);
+  async connectedCallback() {
+    // Check if the developer provided an external template file path string
+    const path = this.constructor.templatePath;
 
-    if (!template) {
-      console.error(`[Blackbird] Template with id "${templateId}" not found.`);
-      return;
+    if (path) {
+      try {
+        const response = await fetch(path);
+        const htmlText = await response.text();
+
+        // Convert the fetched raw text string into browser-executable DOM elements
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(htmlText, 'text/html');
+
+        // Append it cleanly inside the isolated Shadow DOM
+        this.shadowRoot.innerHTML = doc.body.innerHTML;
+      } catch (err) {
+        console.error(`[Blackbird] Failed to fetch external template at: ${path}`, err);
+      }
     }
 
-    // Changed contentEditable to template.content
-    const clone = template.content.cloneNode(true);
-    this.shadowRoot.appendChild(clone);
+    // Fall back to <template id="..."> matching rule if no path exists
+    if (!this.shadowRoot.innerHTML) {
+      const templateId = this.getAttribute('template');
+      const template = document.getElementById(templateId);
+
+      if (!template) {
+        console.error(`[Blackbird] Template with id "${templateId}" not found.`);
+        return;
+      }
+
+      // Changed contentEditable to template.content
+      const clone = template.content.cloneNode(true);
+      this.shadowRoot.appendChild(clone);
+    }
 
     this._hydrateInitialAttributes();
     this._compileDOM();
   }
 
   // Automatically clean up memory when the component leaves the screen
-  disconnectedCallback() {
+  async disconnectedCallback() {
     this.#unsubscribers.forEach(unsubscribe => unsubscribe());
     this.#unsubscribers = [];
   }
