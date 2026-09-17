@@ -1,38 +1,39 @@
-import { BlackbirdStore } from '@blackbirdjs/store';
-
 let globalStoreInstance = null;
 
+// Allow a developer to link an external global store if they chose to use one
 export function setGlobalStore(store) {
   globalStoreInstance = store;
 }
 
 export class BlackbirdComponent extends HTMLElement {
-  // Add an internal register array to capture cleanup tokens safely
-  #unsubscribers = [];
+  #unsubscribers = []; // Internal register array to capture cleanup tokens safely
+  #isMounted = false;  // A strict private guard to track if mounting has already occurred
 
-  // A strict private guard to track if mounting has already occurred
-  #isMounted = false;
+  // Expose: public state object
+  state = {};
 
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
-    this.localStore = new BlackbirdStore({});
-  }
 
-  static get observedAttributes() {
-    return [];
-  }
+    // Setup an invisible native browser proxy to intercept data mutations
+    this.state = new Proxy({}, {
+      set: (target, key, value) => {
+        if (target[key] === value) return true; // Short-circuit identity guard
+        target[key] = value;
 
-  attributeChangedCallback(name, oldValue, newValue) {
-    if (oldValue === newValue) return;
-    const cleanKey = name.replace(/^data-/, '').replace(/-([a-z])/g, g => g.toUpperCase());
-    this.localStore.set(cleanKey, newValue);
+        // If the component is fully mounted on screen, update matched text nodes instantly
+        if (this.#isMounted) {
+          this._updateDOMTextNode(key, value);
+        }
+        return true;
+      }
+    });
   }
 
   async connectedCallback() {
     // MOUNT GUARD: If this instance has already run its template loading setup, block it instantly.
     if (this.#isMounted) return;
-    this.#isMounted = true;
 
     // Check if the developer provided an external template file path string
     const path = this.constructor.templatePath;
@@ -42,9 +43,7 @@ export class BlackbirdComponent extends HTMLElement {
         const response = await fetch(path);
 
         // If the path is broken (404, 500, etc.), do not parse it!
-        if (!response) {
-          throw new Error(`Server responded with status: ${response.status}`);
-        }
+        if (!response.ok) throw new Error(`Status: ${response.status}`);
 
         const htmlText = await response.text();
 
@@ -58,7 +57,9 @@ export class BlackbirdComponent extends HTMLElement {
 
         // Append it cleanly inside the isolated Shadow DOM
         this.shadowRoot.innerHTML = doc.documentElement.innerHTML;
+        this.#isMounted = true;
       } catch (err) {
+        this.#isMounted = false;
         console.error(`[Blackbird] Failed to fetch external template at: ${path}\n`, err);
       }
     }
@@ -66,41 +67,43 @@ export class BlackbirdComponent extends HTMLElement {
     // Fall back to <template id="..."> matching rule if no path exists
     if (!this.shadowRoot.innerHTML) {
       const templateId = this.getAttribute('template');
-      const template = document.getElementById(templateId);
 
-      if (!template) {
-        console.error(`[Blackbird] Template with id "${templateId}" not found.`);
-        return;
+      if (templateId) {
+        const template = document.getElementById(templateId);
+
+        if (!template) {
+          console.error(`[Blackbird] Template with id "${templateId}" not found.`);
+          return;
+        }
+
+        const clone = template.content.cloneNode(true);
+        this.shadowRoot.appendChild(clone);
+        this.#isMounted = true;
       }
-
-      // Changed contentEditable to template.content
-      const clone = template.content.cloneNode(true);
-      this.shadowRoot.appendChild(clone);
     }
 
     this._hydrateInitialAttributes();
     this._compileDOM();
   }
 
-  // Automatically clean up memory when the component leaves the screen
   async disconnectedCallback() {
+    // Teardown active event listeners cleanly to protect runtime memory allocations
     this.#unsubscribers.forEach(unsubscribe => unsubscribe());
     this.#unsubscribers = [];
+    this.#isMounted = false;
   }
 
   _hydrateInitialAttributes() {
     Array.from(this.attributes).forEach(attr => {
       if (attr.name.startsWith('data-')) {
-        // FIX 3: Fixed broken regex format from /-(a-z)/g to /-([a-z])/g
         const cleanKey = attr.name.replace(/^data-/, '').replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
-        this.localStore.set(cleanKey, attr.value);
+        this.state[cleanKey] = attr.value; // Hydrates state value directly throw proxy trap keys
       }
     });
   }
 
   _compileDOM() {
     // Map Text Bindings
-    // Changed querySelector to querySelectorAll so .forEach runs successfully
     const boundElements = this.shadowRoot.querySelectorAll('[data-bind]');
 
     boundElements.forEach(element => {
@@ -108,36 +111,49 @@ export class BlackbirdComponent extends HTMLElement {
 
       if (bindingExpression.startsWith('global.')) {
         const key = bindingExpression.replace('global.', '');
-        if (globalStoreInstance) {
+        if (globalStoreInstance && typeof globalStoreInstance.subscribe === 'function') {
           // Push the returned unsubscribe token to the cleanup tracking list
           const sub = globalStoreInstance.subscribe(key, (val) => {
             element.textContent = val;
           });
-          this.#unsubscribers.push(sub.unsubscribe);
+          // Check if subscription returns a standard cleanup method function or an unsubscribe object
+          if (sub && typeof sub.unsubscribe === 'function') this.#unsubscribers.push(sub.unsubscribe);
+          else if (typeof sub === 'function') this.#unsubscribers.push(sub);
         } else {
           console.warn(`[Blackbird] Global Variable "${key}" requested but no global store configured.`);
         }
       } else {
-        // Capture local store unsubscriptions as well
-        const sub = this.localStore.subscribe(bindingExpression, (val) => {
-          element.textContent = val;
-        });
-        this.#unsubscribers.push(sub.unsubscribe);
+        // Initial text injection from local proxy state values
+        if (this.state[bindingExpression] !== undefined) {
+          element.textContent = this.state[bindingExpression];
+        }
       }
     });
 
-    // Map Event Triggers
+    // Wire up declarative custom clickable event listeners
+    // TODO: change attribute name from data-on-click to data-on:[event]
     const actionElements = this.shadowRoot.querySelectorAll('[data-on-click]');
     actionElements.forEach(element => {
       const methodName = element.getAttribute('data-on-click').trim();
 
-      element.addEventListener('click', (e) => {
+      const handler = (e) => {
         if (typeof this[methodName] === 'function') {
           this[methodName](e);
         } else {
           console.error(`[Blackbird] Event action handler method "${methodName}" missing on class`);
         }
-      });
+      }
+
+      element.addEventListener('click', handler);
+      this.#unsubscribers.push(() => element.removeEventListener('click', handler));
+    });
+  }
+
+  // Fine-grained (surgical) DOM node utility executed whenever a local proxy value alters
+  _updateDOMTextNode(key, newValue) {
+    const targets = this.shadowRoot.querySelectorAll(`[data-bind="${key}"]`);
+    targets.forEach(element => {
+      element.textContent = newValue;
     });
   }
 }
