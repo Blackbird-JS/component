@@ -1,6 +1,6 @@
 {
   "name": "@blackbirdjs/component",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Template-first fine-grained Web Component layer for BlackbirdJS",
   "type": "module",
   "main": "./src/index.js",
